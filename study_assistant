@@ -1,0 +1,102 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS 
+import re
+from collections import Counter
+
+app = Flask(__name__)
+CORS(app)
+
+paragraph_store = []
+
+
+@app.route('/')
+def home():
+    return jsonify({
+        "message": "Welcome to the Paragraph Q&A API!",
+        "endpoints": {
+            "/upload": "POST - Upload a paragraph (JSON: {'paragraph': 'your text'})",
+            "/ask": "POST - Ask a question (JSON: {'question': 'your question'})"
+        },
+        "paragraphs_stored": len(paragraph_store)
+    })
+
+
+@app.route('/upload', methods=['POST'])
+def upload_paragraph():
+    data = request.get_json()
+    paragraph = data.get('paragraph', '').strip()
+
+    if not paragraph:
+        return jsonify({"error": "No paragraph provided"}), 400
+
+    paragraph_store.append(paragraph)
+    return jsonify({
+        "message": "Paragraph uploaded successfully!",
+        "total_paragraphs": len(paragraph_store)
+    })
+
+
+@app.route('/ask', methods=['POST'])
+def answer_question():
+    data = request.get_json()
+    question = data.get('question', '').strip()
+
+    if not paragraph_store:
+        return jsonify({"error": "No paragraphs uploaded yet!"}), 400
+    if not question:
+        return jsonify({"error": "No question provided"}), 400
+
+
+    best_sentence = ""
+    max_overlap = 0
+
+    question_words = set(question.lower().split())
+
+    for paragraph in paragraph_store:
+        sentences = paragraph.split('.')
+        for sentence in sentences:
+            words = set(sentence.lower().split())
+            overlap = len(words & question_words)
+            if overlap > max_overlap:
+                max_overlap = overlap
+                best_sentence = sentence.strip()
+
+    if best_sentence:
+        return jsonify({
+            "question": question,
+            "answer": best_sentence
+        })
+    else:
+        return jsonify({
+            "question": question,
+            "answer": "Sorry, I couldn’t find a relevant answer."
+        })
+
+@app.route('/topics', methods=['GET'])
+def get_topics():
+    if not paragraph_store:
+        return jsonify({"error": "No paragraphs uploaded yet!"}), 400
+
+    all_text = " ".join(paragraph_store).lower()
+
+    words = re.findall(r'\b[a-z]{3,}\b', all_text)
+
+    stopwords = set([
+        'the', 'and', 'for', 'are', 'that', 'this', 'with', 'from', 'was',
+        'you', 'your', 'have', 'has', 'had', 'will', 'would', 'can', 'could',
+        'should', 'a', 'an', 'of', 'to', 'in', 'on', 'at', 'by', 'it', 'is',
+        'as', 'be', 'been', 'or', 'if', 'but', 'they', 'them', 'their', 'we',
+        'our', 'us', 'not', 'there', 'which', 'about'
+    ])
+
+    filtered_words = [w for w in words if w not in stopwords]
+
+    word_counts = Counter(filtered_words)
+    top_topics = [word for word, count in word_counts.most_common(5)]
+
+    return jsonify({
+        "key_topics": top_topics,
+        "total_unique_words": len(word_counts)
+    })
+
+app.run(debug=True)
