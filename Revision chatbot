@@ -1,0 +1,64 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from transformers import pipeline
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+app = Flask(__name__)
+CORS(app)
+
+# ---- 1️⃣ Load models ----
+# Embedding model for retrieval
+embedder = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Summarization / answer generation model
+generator = pipeline("text2text-generation", model="google/flan-t5-base")
+
+# ---- 2️⃣ Load your "knowledge base" ----
+# You can later replace this with text extracted from PDFs or notes
+knowledge_base = [
+    "Quantum physics is the study of matter and energy at the most fundamental level, focusing on the behavior of particles like electrons and photons. "
+    "At this scale, objects can exist in multiple places at once, their properties are dictated by chance, and observing them can change their state. "
+    "Despite its counterintuitive nature, it is a foundational scientific theory that underpins modern technologies such as computers, lasers, and LED screens."
+    "Quantum physics governs the world of atoms and subatomic particles, where behavior differs significantly from our everyday experience."
+    "A quantum object can exist in a combination of multiple states or locations simultaneously until it is measured."
+    "It is impossible to simultaneously know both the exact position and momentum of a particle."
+    "Two or more particles can become linked in such a way that they share the same fate, regardless of the distance separating them."
+]
+
+# Precompute embeddings for the knowledge base
+knowledge_embeddings = embedder.encode(knowledge_base)
+
+
+# ---- 3️⃣ Define a retrieval function ----
+def retrieve_relevant_text(query, top_k=2):
+    query_emb = embedder.encode([query])[0]
+    similarities = np.dot(knowledge_embeddings, query_emb)
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    return [knowledge_base[i] for i in top_indices]
+
+
+# ---- 4️⃣ Flask API route ----
+@app.route("/study/rev_chatbot", methods=["POST"])
+def chat():
+    user_input = request.json.get("question", "")
+    if not user_input:
+        return jsonify({"error": "No question provided"}), 400
+
+    # Retrieve relevant study notes
+    retrieved_texts = retrieve_relevant_text(user_input)
+    context = " ".join(retrieved_texts)
+
+    # Generate answer using context
+    prompt = f"Answer the question using this info: {context}\n\nQuestion: {user_input}"
+    response = generator(prompt, max_length=150, do_sample=True)
+
+    return jsonify({
+        "question": user_input,
+        "context_used": retrieved_texts,
+        "answer": response[0]["generated_text"]
+    })
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
